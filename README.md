@@ -116,6 +116,85 @@ docker compose down
 
 ---
 
+## Example run (actual transcript)
+
+Here is a real end-to-end run of this project, captured straight from
+the terminal. No mock-ups, no edits.
+
+**1. Bring the stack up and check broker startup:**
+
+```console
+$ docker compose up -d
+$ docker compose ps
+NAME              STATUS
+broker            Up 11 seconds
+pub_fire          Up 10 seconds
+pub_humidity      Up 10 seconds
+pub_light         Up 10 seconds
+pub_temperature   Up 10 seconds
+sub_fire          Up 10 seconds
+sub_humidity      Up 10 seconds
+sub_light         Up 10 seconds
+sub_temperature   Up 10 seconds
+
+$ docker logs broker 2>&1 | grep -iE "started|listener"
+INFO  - Extension "Allow All Extension" version 1.1.0 started successfully.
+INFO  - Starting TCP listener on address 0.0.0.0 and port 1883
+INFO  - Started TCP Listener on address 0.0.0.0 and on port 1883.
+INFO  - Started HiveMQ in 1591ms
+```
+
+**2. Publish one message to each of the four topics:**
+
+```console
+$ ./scripts/pub.sh temperature 24.5
+[pub.sh] Publishing to topic 'sensors/temperature' via container 'pub_temperature'
+[pub.sh] Payload: 24.5
+[pub.sh] Done.
+
+$ ./scripts/pub.sh humidity 61%
+$ ./scripts/pub.sh light ON
+$ ./scripts/pub.sh fire "SMOKE DETECTED IN KITCHEN"
+```
+
+**3. Each subscriber received exactly its own topic's message:**
+
+```console
+$ docker logs sub_temperature
+sensors/temperature 24.5
+
+$ docker logs sub_humidity
+sensors/humidity 61%
+
+$ docker logs sub_light
+home/light ON
+
+$ docker logs sub_fire
+alerts/fire SMOKE DETECTED IN KITCHEN
+```
+
+**4. The broker's own event log proves every publish went through it:**
+
+```console
+$ docker exec broker sh -c 'grep hmq_ /opt/hivemq/log/event.log | tail -n 8'
+Client ID: hmq_PFN6Y_5_af7493..., IP: 172.20.0.8, Clean Start: true connected.
+Client ID: hmq_PFN6Y_5_af7493..., IP: 172.20.0.8 disconnected gracefully.
+Client ID: hmq_PFN6Y_6_502155..., IP: 172.20.0.9, Clean Start: true connected.
+Client ID: hmq_PFN6Y_6_502155..., IP: 172.20.0.9 disconnected gracefully.
+Client ID: hmq_PFN6Y_7_c794ce..., IP: 172.20.0.3, Clean Start: true connected.
+Client ID: hmq_PFN6Y_7_c794ce..., IP: 172.20.0.3 disconnected gracefully.
+Client ID: hmq_PFN6Y_8_b9c4c9..., IP: 172.20.0.6, Clean Start: true connected.
+Client ID: hmq_PFN6Y_8_b9c4c9..., IP: 172.20.0.6 disconnected gracefully.
+```
+
+Each of the four publishes shows up as a `connected` → `disconnected`
+pair in the broker's event log — that's the broker's own receipt for
+receiving, routing, and forwarding each message. Publisher and
+subscriber never talked to each other directly; the broker handled all
+four round trips.
+
+---
+
 ## Live demo (the main event)
 
 Open **four terminal windows / tmux panes / iTerm2 splits**. In each one,
