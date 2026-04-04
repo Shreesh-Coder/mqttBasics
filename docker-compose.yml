@@ -1,0 +1,165 @@
+# =============================================================================
+# MQTT Basics - Educational Docker Compose stack
+# -----------------------------------------------------------------------------
+# 1 broker (HiveMQ Community Edition) + 4 publisher clients + 4 subscriber
+# clients. All containers share the `mqtt_net` bridge network and reach the
+# broker at the hostname "broker" on port 1883.
+#
+# Design:
+#   - Subscribers run `mosquitto_sub -v` in the foreground, so every received
+#     message is written to stdout and visible via `docker logs sub_*`.
+#   - Publishers idle (`tail -f /dev/null`) so you can `docker exec` into them
+#     to publish messages on demand during a live demo.
+# =============================================================================
+
+services:
+
+  # ---------------------------------------------------------------------------
+  # MQTT broker: HiveMQ Community Edition
+  #
+  # We mount our own config.xml at broker/config.xml to declare a single
+  # TCP listener on port 1883. HiveMQ CE's factory default config also
+  # enables a WebSocket listener on port 8000; we override that because
+  # this demo has no browser client and we want the broker slim.
+  # The "Allow All Extension" ships with the image and is loaded
+  # automatically, so any client can connect without credentials.
+  # ---------------------------------------------------------------------------
+  broker:
+    image: hivemq/hivemq-ce:latest
+    container_name: broker
+    # The JVM inside the HiveMQ image has JMX enabled by default and tries to
+    # build an RMI URL from the container's hostname on startup. On user-
+    # defined Docker bridge networks the container's hostname is not always
+    # resolvable from inside the container, which crashes the JVM before
+    # HiveMQ even starts. Setting `hostname` explicitly, plus an extra_hosts
+    # entry mapping that name to 127.0.0.1 inside the container, fixes it.
+    hostname: broker
+    extra_hosts:
+      - "broker:127.0.0.1"
+    # Port is bound to 127.0.0.1 on the host, NOT 0.0.0.0, so only clients
+    # on THIS machine can reach the broker. If you remove the "127.0.0.1:"
+    # prefix, the port binds to all interfaces and (if this machine has a
+    # public IP or a tunnel) anyone on the internet could connect to your
+    # broker - and with the Allow All Extension loaded they would be accepted
+    # with no credentials. For a teaching demo, localhost-only is the right
+    # default.
+    ports:
+      - "127.0.0.1:1883:1883"   # MQTT over TCP (localhost only)
+    volumes:
+      - ./broker/config.xml:/opt/hivemq/conf/config.xml:ro
+    networks:
+      - mqtt_net
+    restart: unless-stopped
+
+  # ---------------------------------------------------------------------------
+  # Subscribers
+  # Each subscriber listens on exactly one topic and prints received messages
+  # to stdout in "<topic> <payload>" format (because of the -v flag).
+  # View them with: docker logs -f sub_<name>
+  #
+  # Each command is wrapped in `until nc -z broker 1883; do sleep 1; done; ...`
+  # so the subscriber *waits* until the broker is accepting TCP connections
+  # before starting mosquitto_sub. Without this, mosquitto_sub crashes on
+  # startup if the broker is still booting (HiveMQ needs ~3-5 seconds), Docker
+  # then restart-loops the container, and the logs fill with "Bad file
+  # descriptor" errors. The wait loop gives us a clean log and zero restarts.
+  # ---------------------------------------------------------------------------
+  sub_temperature:
+    image: eclipse-mosquitto:2
+    container_name: sub_temperature
+    depends_on:
+      - broker
+    networks:
+      - mqtt_net
+    # -h broker   : connect to the broker service by its container name
+    # -t <topic>  : topic filter to subscribe to
+    # -v          : verbose, prints "topic payload" instead of just payload
+    command: sh -c 'until nc -z broker 1883; do sleep 1; done; exec mosquitto_sub -h broker -t sensors/temperature -v'
+    restart: unless-stopped
+
+  sub_humidity:
+    image: eclipse-mosquitto:2
+    container_name: sub_humidity
+    depends_on:
+      - broker
+    networks:
+      - mqtt_net
+    command: sh -c 'until nc -z broker 1883; do sleep 1; done; exec mosquitto_sub -h broker -t sensors/humidity -v'
+    restart: unless-stopped
+
+  sub_light:
+    image: eclipse-mosquitto:2
+    container_name: sub_light
+    depends_on:
+      - broker
+    networks:
+      - mqtt_net
+    command: sh -c 'until nc -z broker 1883; do sleep 1; done; exec mosquitto_sub -h broker -t home/light -v'
+    restart: unless-stopped
+
+  sub_fire:
+    image: eclipse-mosquitto:2
+    container_name: sub_fire
+    depends_on:
+      - broker
+    networks:
+      - mqtt_net
+    command: sh -c 'until nc -z broker 1883; do sleep 1; done; exec mosquitto_sub -h broker -t alerts/fire -v'
+    restart: unless-stopped
+
+  # ---------------------------------------------------------------------------
+  # Publishers
+  # These containers just stay alive. To publish a message, exec into one and
+  # run mosquitto_pub, e.g.:
+  #   docker exec pub_temperature mosquitto_pub -h broker \
+  #       -t sensors/temperature -m "24.5"
+  # Or use the helper script ./scripts/pub.sh temperature 24.5
+  # ---------------------------------------------------------------------------
+  pub_temperature:
+    image: eclipse-mosquitto:2
+    container_name: pub_temperature
+    depends_on:
+      - broker
+    networks:
+      - mqtt_net
+    command: tail -f /dev/null   # idle, waiting for `docker exec`
+    restart: unless-stopped
+
+  pub_humidity:
+    image: eclipse-mosquitto:2
+    container_name: pub_humidity
+    depends_on:
+      - broker
+    networks:
+      - mqtt_net
+    command: tail -f /dev/null
+    restart: unless-stopped
+
+  pub_light:
+    image: eclipse-mosquitto:2
+    container_name: pub_light
+    depends_on:
+      - broker
+    networks:
+      - mqtt_net
+    command: tail -f /dev/null
+    restart: unless-stopped
+
+  pub_fire:
+    image: eclipse-mosquitto:2
+    container_name: pub_fire
+    depends_on:
+      - broker
+    networks:
+      - mqtt_net
+    command: tail -f /dev/null
+    restart: unless-stopped
+
+# -----------------------------------------------------------------------------
+# Shared user-defined bridge network. Container name DNS resolution is
+# automatic on user-defined networks, so clients can reach the broker as
+# "broker:1883" without any IP configuration.
+# -----------------------------------------------------------------------------
+networks:
+  mqtt_net:
+    driver: bridge

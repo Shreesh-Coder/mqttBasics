@@ -1,0 +1,25 @@
+<?xml version="1.0"?>
+<!--
+  HiveMQ Community Edition configuration for this demo.
+
+  We only declare one listener: plain MQTT over TCP on port 1883.
+  HiveMQ CE's factory default config also enables a WebSocket listener
+  on port 8000, but this demo has no browser client, so we override
+  the default with this minimal file to keep the broker to a single
+  listener.
+-->
+<hivemq xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+
+    <listeners>
+        <tcp-listener>
+            <port>1883</port>
+            <bind-address>0.0.0.0</bind-address>
+            <name>tcp-listener</name>
+        </tcp-listener>
+    </listeners>
+
+    <mqtt>
+        <!-- Allow anonymous clients for the demo. Do NOT do this in production. -->
+    </mqtt>
+
+</hivemq>
