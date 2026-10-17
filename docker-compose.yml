@@ -12,6 +12,11 @@
 #     to publish messages on demand during a live demo.
 # =============================================================================
 
+# Fixed project name so the network is always `mqttbasics_mqtt_net`, no matter
+# what folder you cloned into (the README's one-off `docker run --network ...`
+# commands rely on this).
+name: mqttbasics
+
 services:
 
   # ---------------------------------------------------------------------------

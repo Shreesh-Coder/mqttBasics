@@ -1,0 +1,7 @@
+# Keep shell scripts LF on every OS. Without this, Git on Windows
+# (core.autocrlf=true) checks them out as CRLF and WSL/Linux fails with
+# "bash\r: No such file or directory".
+*.sh   text eol=lf
+*.yml  text eol=lf
+*.xml  text eol=lf
+*.ps1  text eol=crlf

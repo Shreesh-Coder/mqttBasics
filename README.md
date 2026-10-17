@@ -1,7 +1,8 @@
 # MQTT Basics — A Dockerized Publish/Subscribe Demo
 
 A tiny, beginner-friendly project that shows how MQTT works end to end:
-one broker, four publishers, four subscribers, all running in Docker. You
+one broker, four publishers, four subscribers, all running in Docker, on
+**Windows (PowerShell), WSL, Linux and macOS**. You
 will watch messages travel from a publisher, through the broker, into a
 subscriber — live, from your terminal.
 
@@ -49,19 +50,102 @@ host it is reachable at `127.0.0.1:1883`.
 
 ---
 
+## How to read the commands in this README
+
+Every command is shown for both worlds. Copy the block that matches the
+terminal you are sitting in:
+
+| Label | Terminal | Script flavour |
+|-------|----------|----------------|
+| 🪟 **Windows** | PowerShell 5.1 or 7+ (Windows Terminal) | `.\scripts\*.ps1` |
+| 🐧 **WSL / Linux / macOS** | Ubuntu (WSL), any Linux shell, macOS Terminal, or Git Bash | `./scripts/*.sh` |
+
+When a command is identical in both, it is shown once and labelled
+**Same everywhere** — `docker`, `git` and `docker compose` behave the same
+in every shell. Only the helper scripts, the shell syntax (`sleep` vs
+`Start-Sleep`, `grep` vs `Select-String`) and the install steps differ.
+
+> Everything in this README was run end to end on Windows 11 (PowerShell 7)
+> **and** Ubuntu 22.04 under WSL 2, both talking to Docker Desktop.
+
+---
+
 ## Prerequisites
 
-- **Docker** (Desktop on macOS/Windows, or Engine on Linux)
-- **Docker Compose v2** (included with Docker Desktop; on Linux install
-  `docker-compose-plugin`)
-- A terminal — Bash/Zsh on macOS/Linux, Git Bash or WSL on Windows
+You need **Git** and **Docker** (with Compose v2). On Windows, **WSL** is
+optional — only needed if you prefer a Linux shell.
 
-Check your install:
+### 1. Install the software
+
+🪟 **Windows** — open **PowerShell as Administrator** (right-click Start →
+*Terminal (Admin)*):
+
+```powershell
+# Git
+winget install -e --id Git.Git
+
+# Docker Desktop (includes Docker Engine + Compose v2)
+winget install -e --id Docker.DockerDesktop
+
+# OPTIONAL: WSL 2 + Ubuntu, if you want to run everything from a Linux shell
+wsl --install -d Ubuntu
+```
+
+Then **restart Windows**, launch **Docker Desktop** from the Start menu, and
+wait until it says *Engine running*. If you installed WSL, open
+Docker Desktop → **Settings → Resources → WSL integration** and switch on
+your Ubuntu distro so `docker` works inside WSL too.
+
+🐧 **WSL (Ubuntu) / Debian / Linux Mint**
 
 ```bash
+sudo apt-get update && sudo apt-get install -y git curl
+```
+
+Docker — pick **one** option:
+
+```bash
+# Option A (WSL, recommended): use Docker Desktop from Windows.
+#   Nothing to install in Ubuntu — just enable WSL integration (see above).
+
+# Option B (native Linux, or WSL without Docker Desktop): Docker Engine + Compose v2
+curl -fsSL https://get.docker.com | sudo sh
+sudo usermod -aG docker "$USER"     # lets you run docker without sudo
+newgrp docker                       # apply the group now (or log out/in)
+```
+
+> Option B inside WSL runs its *own* Docker engine, separate from Docker
+> Desktop. Start it with `sudo service docker start` (WSL without systemd)
+> or `sudo systemctl enable --now docker`. Don't run the stack in both
+> engines at once — they would fight over port 1883.
+
+🐧 **Other Linux distros / macOS**
+
+```bash
+# Fedora / RHEL / CentOS Stream
+sudo dnf install -y git
+curl -fsSL https://get.docker.com | sudo sh && sudo systemctl enable --now docker
+
+# Arch / Manjaro
+sudo pacman -Sy --noconfirm git docker docker-compose && sudo systemctl enable --now docker
+
+# macOS (Homebrew)
+brew install git && brew install --cask docker
+```
+
+### 2. Check your install
+
+**Same everywhere:**
+
+```bash
+git --version
 docker --version
 docker compose version
+docker run --rm hello-world
 ```
+
+If `docker run --rm hello-world` prints *"Hello from Docker!"* you are ready.
+(If it cannot connect to the daemon, see [Troubleshooting](#troubleshooting).)
 
 ---
 
@@ -70,45 +154,65 @@ docker compose version
 ```
 mqttBasics/
 ├── docker-compose.yml     # broker + 4 publishers + 4 subscribers
+├── .gitattributes         # forces LF in *.sh so they run in WSL/Linux after a Windows checkout
 ├── broker/
 │   └── config.xml         # minimal HiveMQ CE config (TCP 1883 only)
 ├── scripts/
-│   ├── pub.sh             # publish a message to any topic
-│   ├── sub.sh             # open a live log feed for any subscriber
-│   └── demo.sh            # publish one sample message to all 4 topics
+│   ├── pub.sh  / pub.ps1      # publish a message to any topic
+│   ├── sub.sh  / sub.ps1      # open a live log feed for any subscriber
+│   └── demo.sh / demo.ps1     # publish one sample message to all 4 topics
 └── README.md
 ```
+
+`*.sh` = Bash (WSL, Linux, macOS, Git Bash). `*.ps1` = PowerShell (Windows).
+They do the same thing; use whichever matches your terminal.
 
 ---
 
 ## Quick start
 
+**1. Clone the repository** — *same everywhere*:
+
 ```bash
-# 1. Clone the repository
 git clone https://github.com/Shreesh-Coder/mqttBasics.git
 cd mqttBasics
+```
 
-# 2. Make the helper scripts executable (only needed on Linux/macOS after a fresh clone)
-chmod +x scripts/*.sh
+> **WSL tip:** clone into the Linux filesystem (`cd ~` first) rather than
+> `/mnt/c/...` — it is much faster. Cloning on the Windows side and opening
+> it from WSL under `/mnt/...` also works.
 
-# 3. Start the broker and all clients in the background
+**2. Start the broker and all clients** — *same everywhere*:
+
+```bash
 docker compose up -d
+```
 
-# 4. Verify every container is running
+**3. Verify all nine containers are running** — *same everywhere*:
+
+```bash
 docker compose ps
 ```
 
 You should see nine containers: `broker`, the four `sub_*`, and the four
-`pub_*`. Give the broker ~5 seconds to finish booting before you publish
-anything.
+`pub_*`. Give the broker ~5 seconds to finish booting before you publish,
+then check for the `Started HiveMQ` banner:
 
-Check the broker is ready by looking for the "Started HiveMQ" banner:
+🪟 **Windows**
 
-```bash
-docker logs broker | tail -n 20
+```powershell
+Start-Sleep -Seconds 5
+docker logs broker 2>&1 | Select-String "Started HiveMQ|listener"
 ```
 
-When you are done:
+🐧 **WSL / Linux / macOS**
+
+```bash
+sleep 5
+docker logs broker 2>&1 | grep -iE "started hivemq|listener"
+```
+
+**4. When you are done** — *same everywhere*:
 
 ```bash
 docker compose down
@@ -117,6 +221,7 @@ docker compose down
 ---
 
 ## Example run (actual transcript)
+
 
 Here is a real end-to-end run of this project, captured straight from
 the terminal. No mock-ups, no edits.
@@ -193,43 +298,77 @@ receiving, routing, and forwarding each message. Publisher and
 subscriber never talked to each other directly; the broker handled all
 four round trips.
 
+> The transcript above was captured in Bash. In PowerShell the output is the
+> same; only the prompt differs and you type `.\scripts\pub.ps1 temperature 24.5`
+> instead of `./scripts/pub.sh temperature 24.5`.
+
 ---
 
 ## Live demo (the main event)
 
-Open **four terminal windows / tmux panes / iTerm2 splits**. In each one,
-tail a different subscriber so your audience can see all four topics at
-once:
+You want four subscriber feeds visible at once, plus one place to publish.
+
+**Option 1 — one window, all four feeds merged** (*same everywhere*, easiest):
 
 ```bash
-# pane 1
-./scripts/sub.sh temperature
-
-# pane 2
-./scripts/sub.sh humidity
-
-# pane 3
-./scripts/sub.sh light
-
-# pane 4
-./scripts/sub.sh fire
+docker compose logs -f sub_temperature sub_humidity sub_light sub_fire
 ```
 
-Each pane will sit silently — the subscribers are waiting for messages.
+**Option 2 — four panes, one subscriber each.** Windows Terminal: split with
+`Alt+Shift+-` and `Alt+Shift++`. WSL/Linux: use `tmux` (`Ctrl+b` then `%` or
+`"`). macOS: iTerm2 splits (`Cmd+D`). In each pane tail one subscriber:
+
+🪟 **Windows**
+
+```powershell
+.\scripts\sub.ps1 temperature     # pane 1
+.\scripts\sub.ps1 humidity        # pane 2
+.\scripts\sub.ps1 light           # pane 3
+.\scripts\sub.ps1 fire            # pane 4
+```
+
+🐧 **WSL / Linux / macOS**
+
+```bash
+./scripts/sub.sh temperature      # pane 1
+./scripts/sub.sh humidity         # pane 2
+./scripts/sub.sh light            # pane 3
+./scripts/sub.sh fire             # pane 4
+```
+
+Each pane sits silently — the subscribers are waiting for messages.
 
 Now open a **fifth pane** and publish:
+
+🪟 **Windows**
+
+```powershell
+.\scripts\pub.ps1 temperature 24.5
+```
+
+🐧 **WSL / Linux / macOS**
 
 ```bash
 ./scripts/pub.sh temperature 24.5
 ```
 
-The `sub_temperature` pane will immediately print:
+The `sub_temperature` pane immediately prints:
 
 ```
 sensors/temperature 24.5
 ```
 
 Do the other three:
+
+🪟 **Windows**
+
+```powershell
+.\scripts\pub.ps1 humidity 61%
+.\scripts\pub.ps1 light ON
+.\scripts\pub.ps1 fire "SMOKE DETECTED IN KITCHEN"
+```
+
+🐧 **WSL / Linux / macOS**
 
 ```bash
 ./scripts/pub.sh humidity 61%
@@ -239,38 +378,37 @@ Do the other three:
 
 Or fire all four at once:
 
-```bash
-./scripts/demo.sh
-```
+🪟 **Windows**: `.\scripts\demo.ps1`  
+🐧 **WSL / Linux / macOS**: `./scripts/demo.sh`
 
 ### Prove the broker is really in the middle
 
 HiveMQ CE's main log records startup and listener info, but per-client
 CONNECT / DISCONNECT events are written to a separate event log inside
-the broker container. Tail it like this:
+the broker container. Tail it (*same everywhere*):
 
 ```bash
 docker exec broker sh -c 'tail -f /opt/hivemq/log/event.log | grep --line-buffered hmq_'
 ```
 
 `grep hmq_` filters to just the auto-generated client IDs that
-`mosquitto_pub` uses. Every time you run `./scripts/pub.sh ...`, two new
-lines appear here — a CONNECT and a graceful DISCONNECT — which is the
-broker's own record of the publisher client connecting, sending its
-PUBLISH, and disconnecting. That is proof the broker is in the middle.
+`mosquitto_pub` uses. Every time you publish, two new lines appear here —
+a CONNECT and a graceful DISCONNECT — which is the broker's own record of
+the publisher connecting, sending its PUBLISH, and disconnecting. That is
+proof the broker is in the middle. (`Ctrl+C` stops the tail.)
 
 ---
 
 ## Doing it the "raw" way (no scripts)
 
 The scripts are just sugar. Every command in them is a plain `docker exec`
-or `docker logs`. Here is what actually runs:
+or `docker logs`, and these are **identical in PowerShell, WSL, Linux and
+macOS** — so this is the most portable way to learn.
 
 **Publish a message**
 
 ```bash
-docker exec pub_temperature \
-  mosquitto_pub -h broker -t sensors/temperature -m "24.5"
+docker exec pub_temperature mosquitto_pub -h broker -t sensors/temperature -m "24.5"
 ```
 
 **Watch a subscriber's live feed**
@@ -283,31 +421,33 @@ docker logs -f sub_temperature
 wildcards):
 
 ```bash
-docker run --rm -it --network mqttbasics_mqtt_net \
-  eclipse-mosquitto:2 mosquitto_sub -h broker -t "#" -v
+docker run --rm -it --network mqttbasics_mqtt_net eclipse-mosquitto:2 mosquitto_sub -h broker -t "#" -v
 ```
 
-> The network name follows the pattern `<project>_<network>`. If
-> `docker network ls` shows a different name, use that one.
+> The compose file pins the project name to `mqttbasics`, so the network is
+> always `mqttbasics_mqtt_net`, whatever folder you cloned into. Stop with
+> `Ctrl+C`. In **Git Bash** on Windows put `winpty` in front of `docker run -it`.
 
 ---
 
 ## Inspecting logs
 
-| What you want to see                      | Command                              |
-|-------------------------------------------|--------------------------------------|
-| Broker startup / listener / extension info | `docker logs -f broker`             |
+All of these are *same everywhere*.
+
+| What you want to see                        | Command |
+|---------------------------------------------|---------|
+| Broker startup / listener / extension info  | `docker logs -f broker` |
 | Broker per-client connect/disconnect events | `docker exec broker sh -c 'tail -f /opt/hivemq/log/event.log \| grep --line-buffered hmq_'` |
-| Messages received by one subscriber       | `docker logs -f sub_temperature`     |
-| Last 50 broker log lines                  | `docker logs --tail 50 broker`       |
-| Everything from every container           | `docker compose logs -f`             |
-| Just the subscribers                      | `docker compose logs -f sub_temperature sub_humidity sub_light sub_fire` |
+| Messages received by one subscriber         | `docker logs -f sub_temperature` |
+| Last 50 broker log lines                    | `docker logs --tail 50 broker` |
+| Everything from every container             | `docker compose logs -f` |
+| Just the subscribers                        | `docker compose logs -f sub_temperature sub_humidity sub_light sub_fire` |
 
 ---
 
 ## Testing / sanity checks
 
-**1. Is the broker accepting connections?**
+**1. Is the broker accepting connections?** (*same everywhere*)
 
 ```bash
 docker exec pub_temperature mosquitto_pub -h broker -t test/ping -m "hello"
@@ -318,38 +458,104 @@ silence is good.)
 
 **2. Does the subscriber actually receive what the publisher sends?**
 
-```bash
-# Pane A
-docker logs -f sub_light
+Pane A (*same everywhere*):
 
-# Pane B
-./scripts/pub.sh light ON
+```bash
+docker logs -f sub_light
 ```
+
+Pane B:
+
+🪟 **Windows**: `.\scripts\pub.ps1 light ON`  
+🐧 **WSL / Linux / macOS**: `./scripts/pub.sh light ON`
 
 Pane A should immediately print `home/light ON`.
 
-**3. Do wildcards work?** Run a one-off subscriber on `sensors/#` and watch
-both temperature and humidity publishes land in the same feed:
+**3. Do wildcards work?** Run a one-off subscriber on `sensors/#` (*same
+everywhere*) and watch temperature and humidity land in the same feed — but
+not `home/light`:
 
 ```bash
-docker run --rm -it --network mqttbasics_mqtt_net \
-  eclipse-mosquitto:2 mosquitto_sub -h broker -t "sensors/#" -v
+docker run --rm -it --network mqttbasics_mqtt_net eclipse-mosquitto:2 mosquitto_sub -h broker -t "sensors/#" -v
 ```
 
 Then in another pane:
 
+🪟 **Windows**
+
+```powershell
+.\scripts\pub.ps1 temperature 25.1
+.\scripts\pub.ps1 humidity 55%
+.\scripts\pub.ps1 light OFF
+```
+
+🐧 **WSL / Linux / macOS**
+
 ```bash
 ./scripts/pub.sh temperature 25.1
 ./scripts/pub.sh humidity 55%
+./scripts/pub.sh light OFF
 ```
 
 ---
 
 ## Troubleshooting
 
+**`Cannot connect to the Docker daemon` / `open //./pipe/dockerDesktopLinuxEngine: The system cannot find the file specified`.**
+Docker isn't running. Start it:
+
+🪟 **Windows**
+
+```powershell
+Start-Process "C:\Program Files\Docker\Docker\Docker Desktop.exe"
+docker info     # repeat until it prints server details instead of an error
+```
+
+🐧 **Linux / WSL with native Docker Engine**
+
+```bash
+sudo systemctl start docker        # Linux with systemd
+sudo service docker start          # WSL without systemd
+```
+
+**`docker: command not found` inside WSL.**
+Docker Desktop → Settings → Resources → **WSL integration** → enable your
+distro → Apply. Or install Docker Engine inside WSL (Prerequisites, Option B).
+
+**`permission denied ... /var/run/docker.sock` on Linux/WSL.**
+
+```bash
+sudo usermod -aG docker "$USER" && newgrp docker
+```
+
+**`/usr/bin/env: 'bash\r': Permission denied` (or `No such file or directory`) when running `./scripts/*.sh` in WSL/Linux.**
+The scripts were checked out with Windows (CRLF) line endings. The repo now
+ships a `.gitattributes` that prevents this; if you cloned an older version,
+`git pull` and convert once:
+
+```bash
+sed -i 's/\r$//' scripts/*.sh && chmod +x scripts/*.sh
+```
+
+On Windows you can skip all of this and use the `.ps1` scripts.
+
+**`cannot be loaded because running scripts is disabled on this system` (PowerShell).**
+Allow local scripts for your user, or bypass for a single run:
+
+```powershell
+Set-ExecutionPolicy -Scope CurrentUser RemoteSigned
+# or, one-off:
+powershell -ExecutionPolicy Bypass -File .\scripts\pub.ps1 temperature 24.5
+```
+
 **Port 1883 is already in use.**
-Another MQTT broker is running on your machine. Either stop it, or change
-the host side of the port mapping in `docker-compose.yml`:
+Another MQTT broker is running on your machine. Find it:
+
+🪟 **Windows**: `netstat -ano | findstr :1883`  
+🐧 **WSL / Linux**: `sudo ss -ltnp | grep 1883` (macOS: `lsof -i :1883`)
+
+Then stop it, or change the host side of the port mapping in
+`docker-compose.yml`:
 
 ```yaml
 ports:
@@ -371,10 +577,10 @@ Check three things in order:
    `docker compose restart sub_<topic>`.
 2. `docker logs sub_<topic>` — any error from `mosquitto_sub`?
 3. `docker logs broker` — does it show your publish? If yes, the broker
-   received it but is not forwarding — check that the topic in `pub.sh`
+   received it but is not forwarding — check that the topic you published to
    matches the topic the subscriber is listening on.
 
-**I want a clean slate.**
+**I want a clean slate** (*same everywhere*).
 
 ```bash
 docker compose down -v
@@ -384,15 +590,14 @@ docker compose up -d
 **Wrong network name in the one-off subscriber command.**
 List networks and use the actual name:
 
-```bash
-docker network ls | grep mqtt
-```
+🪟 **Windows**: `docker network ls | Select-String mqtt`  
+🐧 **WSL / Linux / macOS**: `docker network ls | grep mqtt`
 
 ---
 
 ## How to extend
 
-Add a new topic in three steps. Say you want `garage/door`:
+Add a new topic in four steps. Say you want `garage/door`:
 
 1. In `docker-compose.yml`, copy an existing `sub_*` block and change:
    - `container_name: sub_garage`
@@ -401,11 +606,28 @@ Add a new topic in three steps. Say you want `garage/door`:
 2. Copy an existing `pub_*` block and change:
    - `container_name: pub_garage`
 
-3. In `scripts/pub.sh` and `scripts/sub.sh`, add a new `case` branch for
-   `garage`.
+3. Teach the helper scripts about it:
+   - **Bash:** in `scripts/pub.sh` and `scripts/sub.sh`, add a `garage)` branch to the `case`.
+   - **PowerShell:** in `scripts/pub.ps1` add `garage` to `ValidateSet` and to the `$map` table; in `scripts/sub.ps1` add `garage` to `ValidateSet`.
 
-Restart the stack: `docker compose up -d`. Publish with
-`./scripts/pub.sh garage OPEN`.
+4. Restart the stack (*same everywhere*):
+
+```bash
+docker compose up -d
+```
+
+Then publish:
+
+🪟 **Windows**: `.\scripts\pub.ps1 garage OPEN`  
+🐧 **WSL / Linux / macOS**: `./scripts/pub.sh garage OPEN`
+
+---
+
+## More guides
+
+- [`LINUX_SETUP.md`](LINUX_SETUP.md) — bare-Linux walkthrough
+- [`mqtt_windows_full_setup (1).md`](<mqtt_windows_full_setup (1).md>) — Windows + WSL from scratch
+- [`PRESENTATION.md`](PRESENTATION.md) — talking points for presenting the demo
 
 ---
 
