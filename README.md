@@ -161,6 +161,10 @@ mqttBasics/
 │   ├── pub.sh  / pub.ps1      # publish a message to any topic
 │   ├── sub.sh  / sub.ps1      # open a live log feed for any subscriber
 │   └── demo.sh / demo.ps1     # publish one sample message to all 4 topics
+├── examples/
+│   ├── py_publisher.py    # Python (paho-mqtt) publisher
+│   ├── py_subscriber.py   # Python (paho-mqtt) subscriber, supports wildcards
+│   └── requirements.txt
 └── README.md
 ```
 
@@ -368,6 +372,232 @@ docker run --rm -it --network mqttbasics_mqtt_net eclipse-mosquitto:2 mosquitto_
 > The compose file pins the project name to `mqttbasics`, so the network is
 > always `mqttbasics_mqtt_net`, whatever folder you cloned into. Stop with
 > `Ctrl+C`. In **Git Bash** on Windows put `winpty` in front of `docker run -it`.
+
+---
+
+## Wildcards (subscribing to many topics at once)
+
+A subscriber can use a **topic filter** instead of an exact topic name. The
+broker does the matching, so publishers never need to know who is listening.
+
+| Wildcard | Meaning | Rule |
+|----------|---------|------|
+| `+` | exactly **one** topic level | can appear at any level, e.g. `sensors/+/outdoor` |
+| `#` | **everything** from this level down | must be the **last** character, e.g. `sensors/#` |
+
+Wildcards are for **subscribing only** — you always publish to one exact topic.
+
+Using this demo's four topics, here is what each filter receives:
+
+| Filter | `sensors/temperature` | `sensors/humidity` | `home/light` | `alerts/fire` |
+|--------|:---:|:---:|:---:|:---:|
+| `sensors/temperature` (exact) | ✅ | | | |
+| `sensors/+` | ✅ | ✅ | | |
+| `+/light` | | | ✅ | |
+| `home/#` | | | ✅ | |
+| `sensors/#` | ✅ | ✅ | | |
+| `#` (everything) | ✅ | ✅ | ✅ | ✅ |
+
+Try them. Run **one** of these in a pane (*same everywhere*), `Ctrl+C` to stop:
+
+```bash
+docker run --rm -it --network mqttbasics_mqtt_net eclipse-mosquitto:2 mosquitto_sub -h broker -t "sensors/+" -v
+docker run --rm -it --network mqttbasics_mqtt_net eclipse-mosquitto:2 mosquitto_sub -h broker -t "+/light" -v
+docker run --rm -it --network mqttbasics_mqtt_net eclipse-mosquitto:2 mosquitto_sub -h broker -t "home/#" -v
+docker run --rm -it --network mqttbasics_mqtt_net eclipse-mosquitto:2 mosquitto_sub -h broker -t "#" -v
+```
+
+Then fire the demo from another pane and compare with the table:
+
+🪟 **Windows**: `.\scripts\demo.ps1`  
+🐧 **WSL / Linux / macOS**: `./scripts/demo.sh`
+
+You can also pass **several filters at once**:
+
+```bash
+docker run --rm -it --network mqttbasics_mqtt_net eclipse-mosquitto:2 mosquitto_sub -h broker -t "sensors/#" -t "alerts/+" -v
+```
+
+(That one receives temperature, humidity and fire — but not `home/light`.)
+
+---
+
+## How a real system uses this
+
+This demo has four toy topics. A real deployment has thousands of devices,
+but the pattern is identical: **devices publish, services subscribe, the
+broker routes, and neither side knows about the other.**
+
+**Scenario: a smart building.** Every room has a temperature sensor, a
+smoke detector and a smart light. Several independent services care about
+different slices of that data.
+
+```
+   DEVICES (publish)                     BROKER                  SERVICES (subscribe)
+
+ ┌──────────────────┐                                       ┌───────────────────────┐
+ │ room204 sensor   │ acme/b1/f2/r204/temperature           │ Dashboard (web UI)    │
+ │ room205 sensor   │ acme/b1/f2/r205/temperature  ┌──────┐ │  sub: acme/b1/#       │
+ │ ... 500 more     │─────────────────────────────▶│      │▶└───────────────────────┘
+ └──────────────────┘                              │      │ ┌───────────────────────┐
+ ┌──────────────────┐                              │ MQTT │▶│ Time-series DB        │
+ │ smoke detectors  │ acme/b1/alerts/fire          │broker│ │  sub: acme/#          │
+ │                  │─────────────────────────────▶│      │ │  (stores history)     │
+ └──────────────────┘                              │      │ └───────────────────────┘
+ ┌──────────────────┐                              │      │ ┌───────────────────────┐
+ │ smart lights     │◀─ acme/b1/f2/r204/light/set ─│      │▶│ Alert service         │
+ │ (also subscribe) │── acme/b1/f2/r204/light ────▶│      │ │  sub: acme/+/alerts/# │
+ └──────────────────┘                              └──────┘ │  → SMS / pager        │
+                                                      ▲     └───────────────────────┘
+ ┌──────────────────┐   acme/b1/f2/r204/light/set     │     ┌───────────────────────┐
+ │ Mobile app       │─────────────────────────────────┘     │ Analytics / ML job    │
+ │ (user taps "ON") │                                       │  sub: acme/b1/+/+/temperature
+ └──────────────────┘                                       └───────────────────────┘
+```
+
+**Topic design.** Treat topics like a folder path, general → specific:
+
+```
+acme/<building>/<floor>/<room>/<metric>      e.g. acme/b1/f2/r204/temperature
+acme/<building>/alerts/<type>                e.g. acme/b1/alerts/fire
+```
+
+**Who subscribes to what** (this is where wildcards earn their keep):
+
+| Service | Filter | Why |
+|---------|--------|-----|
+| Dashboard for the whole building | `acme/b1/#` | everything in building 1 |
+| Dashboard for one room | `acme/b1/f2/r204/#` | one room only |
+| Average-temperature job | `acme/b1/+/+/temperature` | every room's temperature, nothing else |
+| Alert service | `acme/+/alerts/#` | alerts from **every** building |
+| Database archiver | `acme/#` | store everything |
+
+**What this gives you:**
+
+- **Decoupling.** Add a new service (say, an energy-saving app) by just
+  subscribing — no change to any sensor or other service.
+- **Fan-out.** One temperature reading is delivered to the dashboard, the
+  database and the analytics job at once; the sensor sends it **once**.
+- **Two-way control.** Devices can subscribe too: the mobile app publishes
+  `ON` to `.../light/set` and the light, subscribed to that topic, obeys.
+- **Cheap on bandwidth and battery.** MQTT headers are tiny and the
+  connection stays open, which is why it dominates IoT.
+
+**What a production setup adds on top of this demo** (all supported by
+MQTT/HiveMQ, none enabled here):
+
+- **TLS + authentication** (port 8883, usernames or client certificates)
+  and per-client **ACLs** so a sensor can publish only to its own topic.
+- **QoS 1 / 2** for messages that must not be lost (alerts), QoS 0 for
+  high-volume telemetry.
+- **Retained messages** so a new dashboard instantly sees each room's *last*
+  temperature instead of waiting for the next reading.
+- **Last Will** messages so the broker announces a device that dropped
+  offline unexpectedly.
+- A **clustered broker** (e.g. HiveMQ Enterprise, EMQX, or a cloud service
+  like AWS IoT Core) for high availability. HiveMQ **Community** Edition, used
+  here, is a single node.
+
+---
+
+## Doing it from Python (programmatically)
+
+Everything the Docker containers do with `mosquitto_pub` / `mosquitto_sub`
+you can do from code. The examples use
+[`paho-mqtt`](https://pypi.org/project/paho-mqtt/), the standard Python MQTT
+client, and connect to the broker's published port `127.0.0.1:1883` — so
+they run **on your machine** (Windows or WSL), not inside Docker. Make sure
+the stack is up first (`docker compose up -d`).
+
+| File | What it does | Docker equivalent |
+|------|--------------|-------------------|
+| [`examples/py_subscriber.py`](examples/py_subscriber.py) | subscribe to one or more topic filters and print messages | `mosquitto_sub -t <filter> -v` |
+| [`examples/py_publisher.py`](examples/py_publisher.py) | publish one message, or `--demo` for all four topics | `mosquitto_pub -t <topic> -m <msg>` |
+
+### 1. One-time setup
+
+Use a **separate** virtual environment per OS (a Windows venv does not work
+inside WSL and vice versa).
+
+🪟 **Windows** (PowerShell, from the repo folder)
+
+```powershell
+python -m venv .venv-win
+.\.venv-win\Scripts\Activate.ps1
+pip install -r examples\requirements.txt
+```
+
+> No `python`? `winget install -e --id Python.Python.3.12`, then reopen
+> PowerShell. If activation is blocked, see the *running scripts is
+> disabled* fix in [Troubleshooting](#troubleshooting).
+
+🐧 **WSL / Linux / macOS** (from the repo folder)
+
+```bash
+sudo apt-get update && sudo apt-get install -y python3 python3-venv python3-pip   # Debian/Ubuntu/WSL
+python3 -m venv .venv-wsl
+source .venv-wsl/bin/activate
+pip install -r examples/requirements.txt
+```
+
+### 2. Subscribe (pane 1)
+
+🪟 **Windows**
+
+```powershell
+python examples\py_subscriber.py "sensors/#" "alerts/+"
+```
+
+🐧 **WSL / Linux / macOS**
+
+```bash
+python examples/py_subscriber.py "sensors/#" "alerts/+"
+```
+
+With no arguments it subscribes to `#` (everything). Leave it running.
+
+### 3. Publish (pane 2, venv activated there too)
+
+🪟 **Windows**
+
+```powershell
+python examples\py_publisher.py --demo
+python examples\py_publisher.py home/garage OPEN
+```
+
+🐧 **WSL / Linux / macOS**
+
+```bash
+python examples/py_publisher.py --demo
+python examples/py_publisher.py home/garage OPEN
+```
+
+Pane 1 prints (note `home/light` and `home/garage` are filtered out — they
+match neither `sensors/#` nor `alerts/+`):
+
+```
+[py_subscriber] connected; subscribing to ['sensors/#', 'alerts/+']
+sensors/temperature 24.5
+sensors/humidity 61%
+alerts/fire SMOKE DETECTED IN KITCHEN
+```
+
+And because it is the same broker, the **Docker** subscribers see the
+Python publisher's messages too — `docker logs sub_fire` shows
+`alerts/fire SMOKE DETECTED IN KITCHEN`. Python and Docker clients are
+interchangeable.
+
+### How the code maps to MQTT
+
+```python
+client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2)
+client.connect("127.0.0.1", 1883)           # TCP connect + MQTT CONNECT
+client.subscribe([("sensors/#", 0)])        # SUBSCRIBE: standing request to the broker
+client.on_message = on_message              # called for every PUBLISH the broker pushes
+client.loop_forever()                       # keep the connection open and listen
+
+client.publish("sensors/temperature", "24.5", qos=1)   # PUBLISH
+```
 
 ---
 

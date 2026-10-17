@@ -9,3 +9,7 @@
 
 # Logs / runtime state (this project is ephemeral, but just in case)
 *.log
+
+# Python virtual environments (separate ones for Windows and WSL)
+.venv*/
+__pycache__/
